@@ -1,0 +1,23 @@
+<Window x:Class="Wispclip.Views.RenameWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Rename clip" Icon="/Assets/wispclip.ico" SizeToContent="WidthAndHeight" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource BgBrush}"
+        ShowInTaskbar="False">
+    <StackPanel Margin="22" Width="400">
+        <TextBlock Text="Rename clip"
+                   FontFamily="{StaticResource DisplayFont}"
+                   FontSize="18"
+                   FontWeight="SemiBold"/>
+        <TextBlock Text="Choose a name that will be easy to find later."
+                   Margin="0,5,0,18"
+                   FontSize="12"
+                   Foreground="{StaticResource TextDimBrush}"/>
+        <TextBlock Text="Clip name" Style="{StaticResource FieldLabel}"/>
+        <TextBox x:Name="NameBox" Margin="0,0,0,16"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancel" Click="Cancel_Click" Margin="0,0,8,0" IsCancel="True"/>
+            <Button Content="Rename" Style="{StaticResource AccentButton}" Click="Ok_Click" IsDefault="True"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

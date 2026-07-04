@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Wispclip</RootNamespace>
+    <AssemblyName>Wispclip</AssemblyName>
+    <Version>0.2.0</Version>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\wispclip.ico</ApplicationIcon>
+    <Description>Lightweight open-source clip recorder with GPU capture and hardware encoding</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\wispclip.png"/>
+    <Resource Include="Assets\wispclip-small.png"/>
+    <Resource Include="Assets\wispclip.ico"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WinForms is only used for the tray icon and folder dialogs; keep its
+         namespace out of the implicit usings so it can't collide with WPF types -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\README.md"
+             Link="README.md"
+             CopyToPublishDirectory="PreserveNewest"/>
+    <Content Include="..\..\LICENSE"
+             Link="LICENSE"
+             CopyToPublishDirectory="PreserveNewest"/>
+    <Content Include="..\..\THIRD_PARTY_NOTICES.md"
+             Link="THIRD_PARTY_NOTICES.md"
+             CopyToPublishDirectory="PreserveNewest"/>
+  </ItemGroup>
+
+</Project>
