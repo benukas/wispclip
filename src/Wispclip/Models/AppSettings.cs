@@ -34,6 +34,13 @@ public class VideoSettings
     /// <summary>Constant-quality value (CQP/CRF-style). Lower = better quality, bigger files.</summary>
     public int Quality { get; set; } = 22;
 
+    /// <summary>
+    /// Use the fastest encoder presets to minimize GPU load while capturing, trading some
+    /// compression efficiency (larger files at the same CQ). The quality target itself is
+    /// unchanged; only how hard the encoder works to hit it.
+    /// </summary>
+    public bool PerformanceMode { get; set; } = false;
+
     /// <summary>ddagrab output index (roughly matches display order).</summary>
     public int MonitorIndex { get; set; } = 0;
 

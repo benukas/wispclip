@@ -17,6 +17,7 @@ Everything runs locally. Wispclip never uploads recordings, analytics, or accoun
 ## Contents
 
 - [Features](#features)
+- [Performance](#performance)
 - [Install](#install)
 - [FFmpeg](#ffmpeg)
 - [First launch](#first-launch)
@@ -36,10 +37,29 @@ Everything runs locally. Wispclip never uploads recordings, analytics, or accoun
 
 - **Always-on replay buffer** — keep the last 15 seconds to 5 minutes and save it with a hotkey.
 - **Hardware encoding** — NVENC, AMD AMF, and Intel Quick Sync with automatic pipeline detection.
-- **Low-impact capture** — probes the best GPU capture path instead of trusting driver capability lists.
+- **Low-impact capture** — probes the best GPU capture path instead of trusting driver capability lists, with an optional performance mode and live encode diagnostics.
 - **Built-in editor** — trim, zoom, and reframe clips, then export without touching the original.
 - **Tray-first** — arms on launch, keeps recording when the window closes, optional start at sign-in.
 - **Fully local** — no accounts, no uploads, no telemetry.
+
+## Performance
+
+Wispclip is built to barely exist while you game: frames stay on the GPU end-to-end (zero-copy capture straight into the hardware encoder), the encoder process runs below-normal priority, and nothing polls, uploads, or renders in the background while the window is hidden.
+
+Measured with [CapFrameX](https://capframex.com/) in *Ready or Not* on a Ryzen 5 5600 + Radeon RX 7600, against Medal recording the same session at the same 1080p resolution (runs two minutes apart, July 2026):
+
+| Metric | Wispclip¹ | Medal | Difference |
+| --- | --- | --- | --- |
+| Average FPS | **128.1** | 121.9 | +5.1% |
+| 1% low FPS | **84.8** | 83.2 | +1.9% |
+| 0.2% low FPS | **61.7** | 60.2 | +2.5% |
+| 0.1% low FPS | **55.1** | 43.9 | +25.5% |
+
+¹ Windows Graphics Capture pipeline, H.264 AMF hardware encoding, CQ 22, performance mode, 60 fps, 5-minute buffer.
+
+The tail percentiles (1% / 0.1% lows) are what stutter feels like in-game — and they're where recorder overhead actually shows up, since averages barely move regardless of recorder. With the buffer armed on an idle desktop, the whole stack uses roughly 0.3–0.5% CPU and ~70 MB RAM for the encoder process.
+
+The usual benchmark caveats apply: one machine, one game, and run-to-run variance in game benchmarks is real. Run your own comparison — **Settings → Capture engine → Live diagnostics** shows encode speed and dropped frames in real time, and tools like CapFrameX make before/after testing straightforward.
 
 ## Install
 
@@ -70,7 +90,7 @@ Wispclip uses FFmpeg for capture, encoding, and export, but does not bundle or a
 
 **[ffmpeg.org/download.html](https://ffmpeg.org/download.html)**
 
-Pick a Windows build that includes the `ddagrab` filter, which Wispclip needs for GPU screen capture — the essentials build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) (linked from the official page) works well. After extracting the archive, give Wispclip `ffmpeg.exe` and `ffprobe.exe` one of these ways:
+Pick a Windows build that includes the `gfxcapture` and/or `ddagrab` filters, which Wispclip needs for GPU screen capture (`gfxcapture` — Windows Graphics Capture — is preferred when available; `ddagrab` is the fallback). The essentials build from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) (linked from the official page) works well. After extracting the archive, give Wispclip `ffmpeg.exe` and `ffprobe.exe` one of these ways:
 
 - Place them in a `tools\` folder next to `Wispclip.exe`.
 - Add their folder to your system `PATH`.

@@ -30,9 +30,11 @@ public partial class MainWindow : Window
         Player.ClipsChanged += () => LibraryPage.Refresh();
         SettingsPage.Applied += OnSettingsApplied;
 
+        // Only ticks while a recording is in progress (started/stopped in UpdateCaptureUi);
+        // an always-on 1 Hz timer would wake the UI thread forever for nothing while the
+        // app idles in the tray.
         _elapsedTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _elapsedTimer.Tick += (_, _) => UpdateElapsed();
-        _elapsedTimer.Start();
 
         Loaded += OnLoaded;
         Closing += OnClosing;
@@ -66,8 +68,13 @@ public partial class MainWindow : Window
             WindowState = WindowState.Normal;
             ShowInTaskbar = true;
         }
+        else
+        {
+            // When launched hidden at sign-in, skip the library scan (and the thumbnail
+            // ffmpeg jobs it spawns) — ShowFromTray does it when the window first appears.
+            LibraryPage.Refresh();
+        }
 
-        LibraryPage.Refresh();
         await InitializeEngineAsync();
     }
 
@@ -137,6 +144,9 @@ public partial class MainWindow : Window
                 break;
         }
 
+        if (state == CaptureState.Recording) _elapsedTimer.Start();
+        else _elapsedTimer.Stop();
+
         BtnBuffer.IsChecked = state == CaptureState.ReplayBuffer;
         BufferLabel.Text = state == CaptureState.ReplayBuffer ? "Buffer on" : "Buffer off";
         BtnBuffer.IsEnabled = state != CaptureState.Recording;
@@ -185,7 +195,11 @@ public partial class MainWindow : Window
             _overlay?.Show("Clip saved", name);
         else
             _tray?.Notify("Clip saved", name);
-        LibraryPage.Refresh();
+        // Refreshing the library kicks off thumbnail/duration ffmpeg jobs for new clips.
+        // While hidden in the tray (i.e. mid-game) that work is invisible and competes
+        // with the game, so defer it — ShowFromTray refreshes when the window returns.
+        if (IsVisible)
+            LibraryPage.Refresh();
     }
 
     private void OnCaptureError(string message)
@@ -279,6 +293,7 @@ public partial class MainWindow : Window
         Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
+        Player.ResumeFromBackground();
         LibraryPage.Refresh();
     }
 
@@ -290,6 +305,9 @@ public partial class MainWindow : Window
             return;
         }
         e.Cancel = true;
+        // Freeze all UI-side activity before disappearing into the tray: a hidden
+        // MediaElement would otherwise keep decoding video during gameplay.
+        Player.SuspendForBackground();
         Hide();
     }
 

@@ -152,7 +152,9 @@ if not errorlevel 1 (
     if not errorlevel 1 taskkill /F /IM Wispclip.exe /T >nul 2>&1
 )
 
-dotnet publish "%PROJECT%" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o "%DIST%"
+rem ReadyToRun pre-compiles the app to native code so cold startup (especially at Windows
+rem sign-in) skips most JIT work, at the cost of a somewhat larger executable.
+dotnet publish "%PROJECT%" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishReadyToRun=true -p:DebugType=None -p:DebugSymbols=false -o "%DIST%"
 if errorlevel 1 (
     echo [ERROR] Build failed.
     exit /b 1

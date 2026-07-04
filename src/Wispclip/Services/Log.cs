@@ -5,6 +5,8 @@ namespace Wispclip.Services;
 public static class Log
 {
     private static readonly object Gate = new();
+    private static StreamWriter? _writer;
+
     public static string LogDirectory { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Wispclip", "logs");
     public static string LogFile { get; } = Path.Combine(LogDirectory, "wispclip.log");
@@ -27,7 +29,18 @@ public static class Log
         var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}";
         lock (Gate)
         {
-            try { File.AppendAllText(LogFile, line + Environment.NewLine); } catch { }
+            try
+            {
+                // One persistent append stream instead of an open/write/close cycle per
+                // line — log calls land on capture/audio callback threads, so each write
+                // must stay as close to a single syscall as possible. FileShare.Read keeps
+                // "Open log" in Settings working while the app runs.
+                _writer ??= new StreamWriter(
+                    new FileStream(LogFile, FileMode.Append, FileAccess.Write, FileShare.Read))
+                    { AutoFlush = true };
+                _writer.WriteLine(line);
+            }
+            catch { }
         }
     }
 

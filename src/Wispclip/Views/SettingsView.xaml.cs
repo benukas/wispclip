@@ -3,6 +3,8 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using Wispclip.Services;
 
 namespace Wispclip.Views;
@@ -11,6 +13,8 @@ public partial class SettingsView : UserControl
 {
     /// <summary>Fired after settings are saved. Argument: the capture pipeline must be re-probed.</summary>
     public event Action<bool>? Applied;
+
+    private static readonly Brush AmberBrush = new SolidColorBrush(Color.FromRgb(0xE8, 0xB5, 0x4B));
 
     private bool _loaded;
 
@@ -24,6 +28,84 @@ public partial class SettingsView : UserControl
             LoadFromSettings();
             RefreshEngineInfo();
         };
+        App.Capture.StatsUpdated += s => Dispatcher.BeginInvoke(() => UpdateStats(s));
+        App.Capture.StateChanged += s => Dispatcher.BeginInvoke(() => OnCaptureStateChanged(s));
+
+        // Resource sampling costs a couple of process queries per tick, so it only runs
+        // while this page is actually on screen — zero overhead when hidden or in the tray.
+        _usageTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _usageTimer.Tick += (_, _) => SampleUsage();
+        IsVisibleChanged += (_, e) =>
+        {
+            if ((bool)e.NewValue) { ResetUsageBaseline(); _usageTimer.Start(); }
+            else _usageTimer.Stop();
+        };
+    }
+
+    // ------------------------------------------------------------------ live diagnostics
+
+    private readonly DispatcherTimer _usageTimer;
+    private TimeSpan _lastAppCpu, _lastEncCpu;
+    private DateTime _lastSampleAt;
+
+    private void ResetUsageBaseline()
+    {
+        using var self = Process.GetCurrentProcess();
+        _lastAppCpu = self.TotalProcessorTime;
+        _lastEncCpu = App.Capture.EncoderProcessUsage?.Cpu ?? TimeSpan.Zero;
+        _lastSampleAt = DateTime.UtcNow;
+    }
+
+    private void SampleUsage()
+    {
+        var now = DateTime.UtcNow;
+        double elapsed = (now - _lastSampleAt).TotalSeconds;
+        if (elapsed <= 0) return;
+        double toPercent = 100.0 / (elapsed * Environment.ProcessorCount);
+
+        using var self = Process.GetCurrentProcess();
+        double appPct = (self.TotalProcessorTime - _lastAppCpu).TotalSeconds * toPercent;
+        _lastAppCpu = self.TotalProcessorTime;
+        StatAppUsageText.Text = $"{Math.Max(0, appPct):0.0}%  ·  {self.WorkingSet64 / (1024.0 * 1024.0):0} MB";
+
+        if (App.Capture.EncoderProcessUsage is { } enc)
+        {
+            double encPct = (enc.Cpu - _lastEncCpu).TotalSeconds * toPercent;
+            _lastEncCpu = enc.Cpu;
+            StatEncUsageText.Text = $"{Math.Max(0, encPct):0.0}%  ·  {enc.WorkingSet / (1024.0 * 1024.0):0} MB";
+        }
+        else
+        {
+            _lastEncCpu = TimeSpan.Zero;
+            StatEncUsageText.Text = "not running";
+        }
+
+        StatSaveTimeText.Text = App.Capture.LastSaveDurationMs is { } ms ? $"{ms / 1000.0:0.0}s" : "—";
+        _lastSampleAt = now;
+    }
+
+    private void UpdateStats(CaptureStats stats)
+    {
+        StatSpeedText.Text = $"{stats.Speed:0.00}x realtime";
+        StatSpeedText.Foreground = stats.Speed switch
+        {
+            >= 0.95 => (Brush)FindResource("LiveBrush"),
+            >= 0.8 => AmberBrush,
+            _ => (Brush)FindResource("DangerBrush"),
+        };
+        StatDupText.Text = stats.DupFrames.ToString();
+        StatDropText.Text = stats.DropFrames.ToString();
+        StatHintText.Text = "Speed at or near 1.00x means the encoder is keeping up with zero strain.";
+    }
+
+    private void OnCaptureStateChanged(CaptureState state)
+    {
+        if (state != CaptureState.Idle) return;
+        StatSpeedText.Text = "—";
+        StatSpeedText.Foreground = (Brush)FindResource("TextBrush");
+        StatDupText.Text = "—";
+        StatDropText.Text = "—";
+        StatHintText.Text = "Start the replay buffer or a recording to see live stats.";
     }
 
     public void LoadFromSettings()
@@ -49,6 +131,7 @@ public partial class SettingsView : UserControl
         SelectByTag(CodecCombo, s.Video.Codec);
         QualitySlider.Value = s.Video.Quality;
         QualityLabel.Text = $"CQ {s.Video.Quality}";
+        PerfModeCheck.IsChecked = s.Video.PerformanceMode;
 
         SelectByTag(ReplayLenCombo, s.Replay.DurationSeconds.ToString());
         AutoStartCheck.IsChecked = s.Replay.AutoStart;
@@ -206,6 +289,7 @@ public partial class SettingsView : UserControl
         s.Video.MonitorIndex = int.TryParse(TagOf(MonitorCombo), out int mon) ? mon : 0;
         s.Video.Fps = int.TryParse(TagOf(FpsCombo), out int fps) ? fps : 60;
         s.Video.Quality = (int)QualitySlider.Value;
+        s.Video.PerformanceMode = PerfModeCheck.IsChecked == true;
         s.Replay.DurationSeconds = int.TryParse(TagOf(ReplayLenCombo), out int len) ? len : 60;
         s.Replay.AutoStart = AutoStartCheck.IsChecked == true;
         s.LaunchAtWindowsStartup = launchWithWindows;

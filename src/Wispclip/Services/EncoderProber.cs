@@ -45,32 +45,44 @@ public static class EncoderProber
         foreach (var id in candidates)
         {
             progress?.Report($"Testing {PipelineBuilder.Describe(id)}…");
-            string tmp = Path.Combine(Path.GetTempPath(), $"wispclip_probe_{Guid.NewGuid():N}.mp4");
-            try
-            {
-                var p = PipelineBuilder.Build(id, settings);
-                var args = new List<string> { "-y", "-hide_banner", "-loglevel", "error" };
-                args.AddRange(p.InputArgs);
-                args.Add("-map"); args.Add(p.VideoMap);
-                args.AddRange(p.EncoderArgs);
-                args.AddRange(new[] { "-t", "1", "-f", "mp4", tmp });
-
-                var res = await ProcessRunner.RunAsync(ff.Ffmpeg, args, 30000);
-                bool ok = res.Success && File.Exists(tmp) && new FileInfo(tmp).Length > 5_000;
-                Log.Write("probe", $"{id}: exit={res.ExitCode} ok={ok}" +
-                                   (ok ? "" : $" stderr: {Tail(res.StdErr, 400)}"));
-                if (ok) return id;
-            }
-            catch (Exception ex)
-            {
-                Log.Write("probe", $"{id}: exception {ex.Message}");
-            }
-            finally
-            {
-                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
-            }
+            if (await TestPipelineAsync(ff, settings, id)) return id;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Actually captures ~1s with a single candidate pipeline and checks the output is a
+    /// real, non-trivial file. Shared by the full probe sweep above and by CaptureService's
+    /// runtime fallback (e.g. switching off a desktop-duplication pipeline that keeps losing
+    /// access mid-game).
+    /// </summary>
+    public static async Task<bool> TestPipelineAsync(FfmpegPaths ff, AppSettings settings, string id)
+    {
+        string tmp = Path.Combine(Path.GetTempPath(), $"wispclip_probe_{Guid.NewGuid():N}.mp4");
+        try
+        {
+            var p = PipelineBuilder.Build(id, settings);
+            var args = new List<string> { "-y", "-hide_banner", "-loglevel", "error" };
+            args.AddRange(p.InputArgs);
+            args.Add("-map"); args.Add(p.VideoMap);
+            args.AddRange(p.EncoderArgs);
+            args.AddRange(new[] { "-t", "1", "-f", "mp4", tmp });
+
+            var res = await ProcessRunner.RunAsync(ff.Ffmpeg, args, 30000);
+            bool ok = res.Success && File.Exists(tmp) && new FileInfo(tmp).Length > 5_000;
+            Log.Write("probe", $"{id}: exit={res.ExitCode} ok={ok}" +
+                               (ok ? "" : $" stderr: {Tail(res.StdErr, 400)}"));
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            Log.Write("probe", $"{id}: exception {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+        }
     }
 
     private static string Tail(string s, int n) =>

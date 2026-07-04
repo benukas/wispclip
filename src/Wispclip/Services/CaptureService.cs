@@ -9,6 +9,12 @@ namespace Wispclip.Services;
 public enum CaptureState { Idle, ReplayBuffer, Recording }
 
 /// <summary>
+/// Live encode statistics parsed from ffmpeg's "-progress pipe:1" output. Speed is the
+/// realtime factor (1.0 = keeping up exactly); dup/drop counts are cumulative for the run.
+/// </summary>
+public record CaptureStats(double Fps, double Speed, long DupFrames, long DropFrames);
+
+/// <summary>
 /// Owns the single ffmpeg capture process. Two modes, mutually exclusive so the desktop is
 /// only ever duplicated once:
 ///
@@ -40,12 +46,41 @@ public class CaptureService : IDisposable
     private const int MaxAutoRestarts = 3;
     private static readonly TimeSpan CrashWindow = TimeSpan.FromMinutes(2);
 
+    // ddagrab (DXGI Desktop Duplication) can keep losing access under sustained load even
+    // outside exclusive-fullscreen games (driver stalls, mode changes, etc.). If it crashes
+    // repeatedly with that specific signature, permanently switch to the Windows.Graphics.Capture
+    // input instead of endlessly restarting a pipeline that keeps failing. One attempt per
+    // process lifetime so a genuinely unsupported gfxcapture build doesn't get retested forever.
+    private const int AccessLostFallbackThreshold = 2;
+    private bool _gfxFallbackAttempted;
+
     public CaptureState State { get; private set; } = CaptureState.Idle;
     public DateTime? StartedAt { get; private set; }
+
+    /// <summary>Wall-clock duration of the most recent successful SaveReplayAsync, for diagnostics.</summary>
+    public long? LastSaveDurationMs { get; private set; }
+
+    /// <summary>CPU time + working set of the running ffmpeg process, if any (diagnostics).</summary>
+    public (TimeSpan Cpu, long WorkingSet)? EncoderProcessUsage
+    {
+        get
+        {
+            var p = _proc;
+            try
+            {
+                return p != null && !p.HasExited ? (p.TotalProcessorTime, p.WorkingSet64) : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
 
     public event Action<CaptureState>? StateChanged;
     public event Action<string>? ClipSaved;
     public event Action<string>? CaptureError;
+    public event Action<CaptureStats>? StatsUpdated;
 
     public CaptureService(SettingsService settings, Func<FfmpegPaths?> ffmpegResolver)
     {
@@ -130,6 +165,7 @@ public class CaptureService : IDisposable
         int seg = Math.Clamp(S.Replay.SegmentSeconds, 1, 10);
         int wanted = Math.Max(5, S.Replay.DurationSeconds);
         string tempDir = Path.Combine(Path.GetTempPath(), $"wispclip_save_{Guid.NewGuid():N}");
+        var saveTimer = Stopwatch.StartNew();
 
         try
         {
@@ -197,7 +233,8 @@ public class CaptureService : IDisposable
                 if (!res.Success || !File.Exists(outPath))
                     throw new InvalidOperationException($"Concat failed: {Tail(res.StdErr, 300)}");
 
-                Log.Write("capture", $"replay saved: {outPath}");
+                LastSaveDurationMs = saveTimer.ElapsedMilliseconds;
+                Log.Write("capture", $"replay saved in {LastSaveDurationMs}ms: {outPath}");
                 ClipSaved?.Invoke(outPath);
                 return outPath;
             });
@@ -275,6 +312,8 @@ public class CaptureService : IDisposable
         var ff = _ffmpeg()!;
         _stopping = false;
         while (_stderrTail.TryDequeue(out _)) { }
+        _statFps = _statSpeed = 0;
+        _statDup = _statDrop = 0;
 
         // audio sources must exist before ffmpeg starts so their formats are known
         // and the pipe servers are listening when ffmpeg opens its inputs
@@ -285,7 +324,11 @@ public class CaptureService : IDisposable
             TryAddAudio(() => AudioPipeSource.CreateMicrophone(S.Audio.MicrophoneDeviceId));
 
         var inv = CultureInfo.InvariantCulture;
-        var args = new List<string> { "-y", "-hide_banner", "-loglevel", "warning" };
+        // -progress on stdout feeds the live diagnostics panel (1s cadence keeps the
+        // chatter negligible); -nostats silences the default stderr status line so the
+        // error tail stays meaningful.
+        var args = new List<string>
+            { "-y", "-hide_banner", "-loglevel", "warning", "-nostats", "-stats_period", "1", "-progress", "pipe:1" };
         args.AddRange(pipeline.InputArgs);
 
         foreach (var a in _audio)
@@ -326,6 +369,7 @@ public class CaptureService : IDisposable
             CreateNoWindow = true,
             RedirectStandardInput = true,
             RedirectStandardError = true,
+            RedirectStandardOutput = true,
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         Log.Write("ffmpeg", "args: " + string.Join(" ", args));
@@ -340,6 +384,7 @@ public class CaptureService : IDisposable
                 while (_stderrTail.Count > 200) _stderrTail.TryDequeue(out _);
                 Log.Write("ffmpeg", e.Data);
             };
+            _proc.OutputDataReceived += OnProgressLine;
             _proc.Exited += OnProcessExited;
             _proc.Start();
             // If Wispclip is ever killed without running its own shutdown (crash, Task
@@ -358,6 +403,7 @@ public class CaptureService : IDisposable
                 Log.Write("capture", $"could not lower ffmpeg process priority: {ex.Message}");
             }
             _proc.BeginErrorReadLine();
+            _proc.BeginOutputReadLine();
         }
         catch (Exception ex)
         {
@@ -368,6 +414,40 @@ public class CaptureService : IDisposable
 
         foreach (var a in _audio) a.Start();
         return true;
+    }
+
+    // fields of the progress block currently being received; ffmpeg emits key=value lines
+    // and closes each block with a "progress=continue|end" line
+    private double _statFps, _statSpeed;
+    private long _statDup, _statDrop;
+
+    private void OnProgressLine(object? sender, DataReceivedEventArgs e)
+    {
+        if (e.Data == null) return;
+        int eq = e.Data.IndexOf('=');
+        if (eq <= 0) return;
+        string key = e.Data[..eq].Trim();
+        string val = e.Data[(eq + 1)..].Trim();
+        var inv = CultureInfo.InvariantCulture;
+
+        switch (key)
+        {
+            case "fps":
+                double.TryParse(val, NumberStyles.Float, inv, out _statFps);
+                break;
+            case "speed":
+                double.TryParse(val.TrimEnd('x'), NumberStyles.Float, inv, out _statSpeed);
+                break;
+            case "dup_frames":
+                long.TryParse(val, NumberStyles.Integer, inv, out _statDup);
+                break;
+            case "drop_frames":
+                long.TryParse(val, NumberStyles.Integer, inv, out _statDrop);
+                break;
+            case "progress":
+                StatsUpdated?.Invoke(new CaptureStats(_statFps, _statSpeed, _statDup, _statDrop));
+                break;
+        }
     }
 
     private void OnProcessExited(object? sender, EventArgs e)
@@ -383,15 +463,18 @@ public class CaptureService : IDisposable
         CaptureError?.Invoke($"Capture stopped unexpectedly ({died}). Last ffmpeg output:\n{tail}");
 
         if (died == CaptureState.ReplayBuffer)
-            TryAutoRestartBuffer();
+            TryAutoRestartBuffer(tail);
     }
 
     /// <summary>
     /// Brings the replay buffer back after an unexpected crash (most commonly a transient
     /// DXGI_ERROR_ACCESS_LOST from desktop duplication). Gives up after a few attempts in a
     /// short window so a genuinely broken pipeline doesn't relaunch ffmpeg in a tight loop.
+    /// If the crashes look like repeated desktop-duplication access loss, tries switching to
+    /// the Windows.Graphics.Capture input before restarting, since that API tends to survive
+    /// mode/state changes that break ddagrab.
     /// </summary>
-    private void TryAutoRestartBuffer()
+    private void TryAutoRestartBuffer(string crashTail)
     {
         var now = DateTime.UtcNow;
         _recentBufferCrashes.RemoveAll(t => now - t > CrashWindow);
@@ -402,11 +485,61 @@ public class CaptureService : IDisposable
             return;
         }
 
+        bool looksLikeAccessLost =
+            crashTail.Contains("AcquireNextFrame failed", StringComparison.OrdinalIgnoreCase) ||
+            crashTail.Contains("ACCESS_LOST", StringComparison.OrdinalIgnoreCase);
+        bool tryGfxFallback = looksLikeAccessLost && !_gfxFallbackAttempted &&
+            _recentBufferCrashes.Count >= AccessLostFallbackThreshold &&
+            (S.Video.PipelineId?.StartsWith("ddagrab", StringComparison.Ordinal) ?? false);
+
         Log.Write("capture", "replay buffer crashed, attempting automatic restart in 2s");
-        _ = Task.Delay(2000).ContinueWith(_ =>
+        _ = RestartAfterCrashAsync(tryGfxFallback);
+    }
+
+    private async Task RestartAfterCrashAsync(bool tryGfxFallback)
+    {
+        await Task.Delay(2000);
+        if (State != CaptureState.Idle) return;
+
+        if (tryGfxFallback)
         {
-            if (State == CaptureState.Idle) StartReplayBuffer();
-        }, TaskScheduler.Default);
+            _gfxFallbackAttempted = true;
+            await TrySwitchToGfxCaptureAsync();
+        }
+
+        if (State == CaptureState.Idle) StartReplayBuffer();
+    }
+
+    /// <summary>
+    /// Swaps the ddagrab input for its Windows.Graphics.Capture equivalent (same encoder),
+    /// validated with a real 1s test capture, and persists it if it works. Falls through
+    /// silently to a normal same-pipeline restart if gfxcapture isn't available/working either.
+    /// </summary>
+    private async Task TrySwitchToGfxCaptureAsync()
+    {
+        var ff = _ffmpeg();
+        string? currentId = S.Video.PipelineId;
+        if (ff == null || currentId == null) return;
+
+        var parts = currentId.Split('+');
+        if (parts.Length != 2 || !parts[0].StartsWith("ddagrab", StringComparison.Ordinal)) return;
+        string suffix = parts[0]["ddagrab".Length..]; // "", "-cpu", or "-qsv"
+        string candidateId = $"gfxcapture{suffix}+{parts[1]}";
+
+        Log.Write("capture", $"desktop duplication keeps losing access; testing fallback pipeline '{candidateId}'");
+        bool ok = await EncoderProber.TestPipelineAsync(ff, S, candidateId);
+        if (ok)
+        {
+            S.Video.PipelineId = candidateId;
+            _settings.Save();
+            Log.Write("capture", $"switched capture pipeline to '{candidateId}' after repeated desktop-duplication crashes");
+            CaptureError?.Invoke(
+                $"Switched capture method to Windows Graphics Capture after repeated crashes ({PipelineBuilder.Describe(candidateId)}).");
+        }
+        else
+        {
+            Log.Write("capture", $"fallback pipeline '{candidateId}' failed validation; keeping '{currentId}'");
+        }
     }
 
     /// <summary>Best-effort cleanup of leftover per-run buffer folders from earlier sessions.

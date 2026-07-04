@@ -67,6 +67,16 @@
                                    FontSize="11"
                                    Foreground="{StaticResource TextDimBrush}"/>
                     </StackPanel>
+
+                    <StackPanel Margin="0,18,0,0">
+                        <CheckBox x:Name="PerfModeCheck"
+                                  Content="Performance mode"
+                                  ToolTip="Uses the fastest encoder presets to further reduce GPU load while capturing. The quality target stays the same, so files get slightly larger. Try this if you notice any FPS impact in games."/>
+                        <TextBlock Text="Fastest encoder presets for minimal in-game impact. Slightly larger files at the same quality. Longer replay segments (fewer keyframes) also reduce load."
+                                   Margin="27,6,0,0"
+                                   FontSize="11"
+                                   Foreground="{StaticResource TextDimBrush}"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
@@ -229,6 +239,89 @@
                                 Margin="0,0,8,0"/>
                         <Button Content="Open log" Click="OpenLog_Click"/>
                     </StackPanel>
+
+                    <TextBlock Text="Live diagnostics"
+                               Style="{StaticResource FieldLabel}"
+                               Margin="0,18,0,0"/>
+                    <Grid Margin="0,2,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="Encode speed"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextDimBrush}"/>
+                            <TextBlock x:Name="StatSpeedText"
+                                       Text="—"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Duplicated frames"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextDimBrush}"/>
+                            <TextBlock x:Name="StatDupText"
+                                       Text="—"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Dropped frames"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextDimBrush}"/>
+                            <TextBlock x:Name="StatDropText"
+                                       Text="—"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="App CPU / RAM"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextDimBrush}"/>
+                            <TextBlock x:Name="StatAppUsageText"
+                                       Text="—"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="Encoder CPU / RAM"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextDimBrush}"/>
+                            <TextBlock x:Name="StatEncUsageText"
+                                       Text="—"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Last clip save"
+                                       FontSize="11"
+                                       Foreground="{StaticResource TextDimBrush}"/>
+                            <TextBlock x:Name="StatSaveTimeText"
+                                       Text="—"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock x:Name="StatHintText"
+                               Text="Start the replay buffer or a recording to see live stats."
+                               Margin="0,8,0,0"
+                               FontSize="11"
+                               Foreground="{StaticResource TextDimBrush}"/>
                 </StackPanel>
             </Border>
 

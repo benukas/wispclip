@@ -235,6 +235,28 @@ public partial class PlayerView : UserControl
         Visibility = Visibility.Collapsed;
     }
 
+    /// <summary>
+    /// Called when the window hides to the tray with the editor still open: stops video
+    /// decode and the 30 Hz UI tick so an invisible player can't burn CPU/GPU while gaming.
+    /// The clip and edit state stay loaded for when the window comes back.
+    /// </summary>
+    public void SuspendForBackground()
+    {
+        if (_clip == null) return;
+        if (_playing)
+        {
+            try { Media.Pause(); } catch { }
+            SetPlayingUi(false);
+        }
+        _timer.Stop();
+    }
+
+    /// <summary>Restarts the UI tick after the window is shown again (playback stays paused).</summary>
+    public void ResumeFromBackground()
+    {
+        if (_clip != null) _timer.Start();
+    }
+
     // ------------------------------------------------------------------ media events
 
     private void Media_Opened(object sender, RoutedEventArgs e)
